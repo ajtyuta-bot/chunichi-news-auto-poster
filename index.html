@@ -1,47 +1,79 @@
-<!doctype html>
 
+<!DOCTYPE html>
 <html lang="ja">
-
 <head>
-
 <meta charset="UTF-8">
-
 <meta name="viewport" content="width=device-width, initial-scale=1">
-
 <title>中日ニュース速報</title>
-
 <style>
-
 body{margin:0;background:#f1f4f9;font-family:-apple-system,sans-serif;color:#172033}
-
-header{background:#254685;color:white;padding:22px}
-
-h1{font-size:24px;margin:0}
-
+header{background:#254685;color:white;padding:24px 18px}
+h1{font-size:25px;margin:0 0 12px}
 main{padding:16px}
-
-button{background:#254685;color:white;border:0;border-radius:10px;padding:13px;font-size:16px}
-
-.card{background:white;padding:17px;margin:12px 0;border-radius:14px}
-
+button{background:#254685;color:white;border:0;border-radius:12px;padding:15px;font-size:16px;width:100%;cursor:pointer}
+.card{background:white;padding:18px;border-radius:15px;margin-bottom:15px}
+.item{border-top:1px solid #ddd;padding:16px 0}
+.item h3{font-size:16px}
 a{color:#254685}
-
 small{color:#666}
-
 </style>
-
 </head>
-
 <body>
-
 <header>
-
 <h1>中日ニュース速報</h1>
-
 <p>最新記事からXへワンタップ投稿</p>
-
 </header>
-
 <main>
-
-<button onclick="load
+<div class="card">
+<h2>中日ドラゴンズ最新ニュース</h2>
+<button onclick="loadNews()">最新ニュースを表示</button>
+<p id="status"></p>
+<div id="news"></div>
+</div>
+</main>
+<script>
+async function loadNews(){
+ const status=document.getElementById("status");
+ const news=document.getElementById("news");
+ status.textContent="ニュースを検索しています...";
+ news.innerHTML="";
+ const q="中日ドラゴンズ";
+ const rss="https://news.google.com/rss/search?q="+encodeURIComponent(q)+"&hl=ja&gl=JP&ceid=JP:ja";
+ try{
+  const api="https://api.allorigins.win/raw?url="+encodeURIComponent(rss);
+  const response=await fetch(api);
+  if(!response.ok)throw Error("取得失敗");
+  const xml=new DOMParser().parseFromString(await response.text(),"text/xml");
+  const items=[...xml.querySelectorAll("item")].slice(0,20);
+  if(!items.length)throw Error("記事がありません");
+  for(const item of items){
+   const title=item.querySelector("title")?.textContent||"";
+   const link=item.querySelector("link")?.textContent||"";
+   if(!link)continue;
+   const div=document.createElement("div");
+   div.className="item";
+   const h=document.createElement("h3");
+   h.textContent=title;
+   const a=document.createElement("a");
+   a.href=link;
+   a.target="_blank";
+   a.rel="noopener noreferrer";
+   a.textContent="記事を読む";
+   const btn=document.createElement("button");
+   btn.textContent="Xに投稿する";
+   btn.onclick=()=>{
+    const text=title+"\n"+link;
+    window.open("https://twitter.com/intent/tweet?text="+encodeURIComponent(text),"_blank");
+   };
+   div.append(h,a,document.createElement("p"),btn);
+   news.appendChild(div);
+  }
+  status.textContent="最新ニュースを表示しました";
+ }catch(e){
+  status.textContent="ニュースを取得できませんでした。時間をおいて再試行してください。";
+ }
+}
+loadNews();
+</script>
+</body>
+</html>
