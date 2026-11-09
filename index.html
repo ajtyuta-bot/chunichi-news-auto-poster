@@ -16,37 +16,33 @@
 
 *{box-sizing:border-box}
 
-body{margin:0;background:#f1f4f9;color:#182236;font-family:-apple-system,sans-serif}
+body{margin:0;background:#f1f4f9;font-family:-apple-system,sans-serif;color:#182236}
 
-header{background:#254685;color:white;padding:25px 18px}
+header{background:#254685;color:white;padding:24px 18px}
 
-h1{font-size:25px;margin:0 0 12px}
-
-header p{margin:0}
+h1{font-size:25px;margin:0 0 10px}
 
 main{padding:16px;max-width:760px;margin:auto}
 
-.card{background:white;border-radius:16px;padding:18px;margin-bottom:14px}
+.card{background:white;padding:18px;border-radius:15px}
 
-button{border:0;border-radius:10px;padding:13px;background:#254685;color:white;font-size:16px}
+button{background:#254685;color:white;border:0;border-radius:10px;padding:13px;font-size:15px}
 
 button:disabled{opacity:.5}
 
-.news{padding:15px 0;border-top:1px solid #ddd}
-
-.news h3{font-size:17px;line-height:1.5}
-
-.actions{display:flex;gap:8px;flex-wrap:wrap}
-
-.actions button{font-size:14px}
-
 .secondary{background:#e9eef6;color:#254685}
 
-.sub{color:#667085;font-size:13px}
+.item{border-top:1px solid #ddd;padding:16px 0}
+
+.item h3{font-size:17px;line-height:1.5}
+
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+small{color:#667085}
 
 a{color:#254685}
 
-#status{margin:16px 0;white-space:pre-wrap}
+#status{white-space:pre-wrap}
 
 </style>
 
@@ -58,7 +54,7 @@ a{color:#254685}
 
 <h1>中日ニュース速報</h1>
 
-<p>最新記事からXへワンタップ投稿</p>
+<p>過去3日間のニュースからXへ投稿</p>
 
 </header>
 
@@ -68,233 +64,129 @@ a{color:#254685}
 
 <h2>中日ドラゴンズ最新ニュース</h2>
 
-<button id="refresh">最新ニュースを表示</button>
+<button id="refresh">ニュースを更新</button>
 
-<div id="status">読み込み準備完了</div>
+<p id="status">読み込み中…</p>
 
-<div id="articles"></div>
+<div id="news"></div>
 
 </section>
-
-<p class="sub">
-
-過去72時間の記事のみ表示。
-
-投稿後は「投稿済みにする」を押してください。
-
-</p>
 
 </main>
 
 <script>
 
-'use strict';
+const KEY="dragons-posted-v5";
 
-const HOURS=72;
+const news=document.getElementById("news");
 
-const KEY='dragons-posted-v3';
+const statusEl=document.getElementById("status");
 
-const query='中日ドラゴンズ when:3d';
+const refresh=document.getElementById("refresh");
 
-const rss='https://news.google.com/rss/search?q='
+let articles=[];
 
-+encodeURIComponent(query)
+function getPosted(){
 
-+'&hl=ja&gl=JP&ceid=JP:ja';
+try{return JSON.parse(localStorage.getItem(KEY)||"[]")}
 
-const proxies=[
-
-'https://api.allorigins.win/raw?url='+encodeURIComponent(rss),
-
-'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(rss),
-
-'https://corsproxy.io/?'+encodeURIComponent(rss)
-
-];
-
-const statusEl=document.getElementById('status');
-
-const list=document.getElementById('articles');
-
-const refresh=document.getElementById('refresh');
-
-function posted(){
-
-try{
-
-return JSON.parse(localStorage.getItem(KEY)||'[]');
-
-}catch(e){return []}
+catch{return []}
 
 }
 
 function savePosted(url){
 
-const a=posted();
+const p=getPosted();
 
-if(!a.includes(url))a.push(url);
+if(!p.includes(url))p.push(url);
 
-localStorage.setItem(KEY,JSON.stringify(a.slice(-1000)));
-
-}
-
-function setStatus(t){
-
-statusEl.textContent=t;
+localStorage.setItem(KEY,JSON.stringify(p));
 
 }
 
-async function getText(url){
+function render(){
 
-const ctrl=new AbortController();
-
-const timer=setTimeout(()=>ctrl.abort(),10000);
-
-try{
-
-const r=await fetch(url,{
-
-signal:ctrl.signal,
-
-cache:'no-store'
-
-});
-
-if(!r.ok)throw Error('HTTP '+r.status);
-
-return await r.text();
-
-}finally{
-
-clearTimeout(timer);
-
-}
-
-}
-
-function parseFeed(xml){
-
-const doc=new DOMParser().parseFromString(xml,'application/xml');
-
-if(doc.querySelector('parsererror'))throw Error('XML解析エラー');
-
-const items=[...doc.querySelectorAll('item')];
-
-if(!items.length)throw Error('記事がありません');
+news.replaceChildren();
 
 const now=Date.now();
 
-return items.map(item=>({
+const posted=new Set(getPosted());
 
-title:item.querySelector('title')?.textContent?.trim()||'',
+const items=articles.filter(x=>{
 
-url:item.querySelector('link')?.textContent?.trim()||'',
+const t=Date.parse(x.date);
 
-date:new Date(item.querySelector('pubDate')?.textContent||'')
+return Number.isFinite(t)&&t<=now&&
 
-})).filter(x=>
+now-t<=72*3600000&&!posted.has(x.url);
 
-x.url.startsWith('https://') &&
+});
 
-!isNaN(x.date.getTime()) &&
+statusEl.textContent=items.length+"件の未投稿ニュース";
 
-x.date.getTime()<=now &&
+for(const x of items){
 
-now-x.date.getTime()<=HOURS*3600000
+const div=document.createElement("div");
 
-).sort((a,b)=>b.date-a.date);
+div.className="item";
 
-}
-
-function render(items){
-
-list.replaceChildren();
-
-const hidden=new Set(posted());
-
-const visible=items.filter(x=>!hidden.has(x.url));
-
-if(!visible.length){
-
-setStatus('過去72時間の未投稿ニュースはありません。');
-
-return;
-
-}
-
-setStatus(visible.length+'件のニュースを表示しています');
-
-for(const x of visible){
-
-const box=document.createElement('article');
-
-box.className='news';
-
-const h=document.createElement('h3');
+const h=document.createElement("h3");
 
 h.textContent=x.title;
 
-const date=document.createElement('p');
+const date=document.createElement("small");
 
-date.className='sub';
+date.textContent=new Date(x.date).toLocaleString("ja-JP");
 
-date.textContent=x.date.toLocaleString('ja-JP');
+const actions=document.createElement("div");
 
-const actions=document.createElement('div');
+actions.className="actions";
 
-actions.className='actions';
+const link=document.createElement("a");
 
-const tweet=document.createElement('button');
+link.href=x.url;
 
-tweet.textContent='Xで投稿する';
+link.target="_blank";
+
+link.rel="noopener noreferrer";
+
+link.textContent="記事を読む";
+
+const tweet=document.createElement("button");
+
+tweet.textContent="Xに投稿する";
 
 tweet.onclick=()=>{
 
-const text=x.title+'\n'+x.url;
+window.open("https://twitter.com/intent/tweet?text="+
 
-window.open(
-
-'https://twitter.com/intent/tweet?text='+encodeURIComponent(text),
-
-'_blank'
-
-);
+encodeURIComponent(x.title+"\n"+x.url),"_blank");
 
 };
 
-const done=document.createElement('button');
+const done=document.createElement("button");
 
-done.className='secondary';
+done.className="secondary";
 
-done.textContent='投稿済みにする';
+done.textContent="投稿済みにする";
 
 done.onclick=()=>{
 
+if(confirm("Xへの投稿は完了しましたか？")){
+
 savePosted(x.url);
 
-box.remove();
+render();
 
-if(!list.children.length)
-
-setStatus('未投稿ニュースはありません');
+}
 
 };
 
-const open=document.createElement('a');
+actions.append(link,tweet,done);
 
-open.href=x.url;
+div.append(h,date,actions);
 
-open.target='_blank';
-
-open.rel='noopener noreferrer';
-
-open.textContent='記事を読む';
-
-actions.append(tweet,done,open);
-
-box.append(h,date,actions);
-
-list.append(box);
+news.append(div);
 
 }
 
@@ -304,51 +196,37 @@ async function load(){
 
 refresh.disabled=true;
 
-list.replaceChildren();
-
-setStatus('ニュースを取得しています…');
-
-const errors=[];
-
-for(const proxy of proxies){
+statusEl.textContent="ニュースを読み込み中…";
 
 try{
 
-const xml=await getText(proxy);
+const r=await fetch("./news.json?t="+Date.now(),{cache:"no-store"});
 
-const articles=parseFeed(xml);
+if(!r.ok)throw Error("HTTP "+r.status);
 
-render(articles);
+const data=await r.json();
 
-refresh.disabled=false;
+if(!Array.isArray(data))throw Error("データ形式エラー");
 
-return;
+articles=data.sort((a,b)=>Date.parse(b.date)-Date.parse(a.date));
+
+render();
 
 }catch(e){
 
-errors.push(e.message);
+statusEl.textContent="ニュース取得エラー: "+e.message+
+
+"\nGitHub Actionsが成功しているか確認してください。";
+
+}finally{refresh.disabled=false}
 
 }
 
-}
-
-setStatus(
-
-'ニュース取得エラー。\n'
-
-+'無料の取得サービスに接続できませんでした。\n'
-
-+'詳細：'+errors.join(' / ')
-
-);
-
-refresh.disabled=false;
-
-}
-
-refresh.addEventListener('click',load);
+refresh.onclick=load;
 
 load();
+
+setInterval(render,60000);
 
 </script>
 
