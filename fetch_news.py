@@ -2,15 +2,11 @@
 
 import json
 
-import re
-
 import html
 
 import urllib.request
 
 import urllib.parse
-
-import urllib.error
 
 import xml.etree.ElementTree as ET
 
@@ -36,9 +32,9 @@ RSS = (
 
 HEADERS = {
 
-    "User-Agent": "Mozilla/5.0 (compatible; NewsPreviewBot/1.0)",
+    "User-Agent": "Mozilla/5.0",
 
-    "Accept": "text/html,application/xhtml+xml,application/xml"
+    "Accept": "text/html,application/xml"
 
 }
 
@@ -50,7 +46,7 @@ class MetaParser(HTMLParser):
 
         self.meta = {}
 
-        self.canonical = None
+        self.canonical = ""
 
     def handle_starttag(self, tag, attrs):
 
@@ -64,11 +60,13 @@ class MetaParser(HTMLParser):
 
                 self.meta[key.lower()] = a.get("content", "")
 
-        if tag == "link" and a.get("rel", "").lower() == "canonical":
+        if tag == "link":
 
-            self.canonical = a.get("href")
+            if "canonical" in a.get("rel", "").lower():
 
-def fetch(url, timeout=12):
+                self.canonical = a.get("href", "")
+
+def fetch(url, timeout=10):
 
     req = urllib.request.Request(url, headers=HEADERS)
 
@@ -102,7 +100,11 @@ def get_article_info(url):
 
         )
 
-        article_url = urllib.parse.urljoin(final_url, article_url)
+        article_url = urllib.parse.urljoin(
+
+            final_url, article_url
+
+        )
 
         image = (
 
@@ -118,45 +120,15 @@ def get_article_info(url):
 
             image = urllib.parse.urljoin(final_url, image)
 
-        is_google = (
+        return article_url, image
 
-            "news.google.com" in
+    except Exception:
 
-            urllib.parse.urlparse(article_url).netloc
-
-        )
-
-        return {
-
-            "url": article_url,
-
-            "image": image,
-
-            "has_image": bool(image) and not is_google,
-
-            "is_google": is_google
-
-        }
-
-    except Exception as e:
-
-        print("記事確認失敗:", str(e)[:100])
-
-        return {
-
-            "url": url,
-
-            "image": "",
-
-            "has_image": False,
-
-            "is_google": True
-
-        }
+        return url, ""
 
 now = datetime.now(timezone.utc)
 
-items = []
+articles = []
 
 _, rss_text = fetch(RSS, timeout=30)
 
@@ -186,11 +158,15 @@ for item in root.findall(".//item"):
 
         continue
 
-    if not (now - timedelta(hours=72) <= date <= now):
+    if not (
+
+        now - timedelta(hours=72) <= date <= now
+
+    ):
 
         continue
 
-    items.append({
+    articles.append({
 
         "title": html.unescape(title),
 
@@ -200,59 +176,79 @@ for item in root.findall(".//item"):
 
     })
 
-# 最新60件を確認
-
-items = items[:60]
+articles = articles[:60]
 
 results = []
 
 seen = set()
 
-for item in items:
+for article in articles:
 
-    info = get_article_info(item["url"])
+    original_url = article["url"]
 
-    url = info["url"]
+    resolved_url, image = get_article_info(original_url)
 
-    # Googleニュースのリンクのままなら除外
+    if not resolved_url.startswith("https://"):
 
-    if info["is_google"]:
+        resolved_url = original_url
 
-        continue
-
-    if url in seen:
+    if resolved_url in seen:
 
         continue
 
-    seen.add(url)
+    seen.add(resolved_url)
+
+    is_google = (
+
+        urllib.parse.urlparse(resolved_url)
+
+        .hostname == "news.google.com"
+
+    )
 
     results.append({
 
-        "title": item["title"],
+        "title": article["title"],
 
-        "url": url,
+        "url": resolved_url,
 
-        "date": item["date"],
+        "date": article["date"],
 
-        "image": info["image"],
+        "image": image,
 
-        "has_image": info["has_image"]
+        "has_image": bool(image) and not is_google
 
     })
 
-# 写真情報がある記事を優先
+# 写真情報のあるニュースを優先
+
+# 同じ条件なら新しい記事が先
 
 results.sort(
 
-    key=lambda x: (not x["has_image"], x["date"]),
+    key=lambda x: (
 
-    reverse=False
+        x["has_image"],
+
+        x["date"]
+
+    ),
+
+    reverse=True
 
 )
 
 Path("news.json").write_text(
 
-    json.dumps(results, ensure_ascii=False, indent=2),
+    json.dumps(
+
+        results,
+
+        ensure_ascii=False,
+
+        indent=2
+
+    ),
 
     encoding="utf-8"
 
@@ -260,4 +256,10 @@ Path("news.json").write_text(
 
 print("取得件数:", len(results))
 
-print("写真情報あり:", sum(x["has_image"] for x in results))
+print(
+
+    "写真情報あり:",
+
+    sum(x["has_image"] for x in results)
+
+)
