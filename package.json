@@ -1,0 +1,15 @@
+{
+  "name": "chunichi-x-auto-poster",
+  "version": "0.1.0",
+  "private": true,
+  "description": "中日ドラゴンズ関連RSS記事を検出してXへ自動投稿するためのスターターアプリ",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3",
+    "oauth-1.0a": "^2.2.6",
+    "rss-parser": "^3.13.0"
+  }
+}
