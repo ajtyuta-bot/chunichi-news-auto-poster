@@ -16,9 +16,13 @@ from email.utils import parsedate_to_datetime
 
 from pathlib import Path
 
-from html.parser import HTMLParser
+# Googleニュースの検索条件
 
-QUERY = "中日ドラゴンズ when:3d"
+# when:3d を外して幅広く取得し、
+
+# 取得後に72時間以内の記事だけ残す
+
+QUERY = "中日ドラゴンズ"
 
 RSS = (
 
@@ -34,215 +38,179 @@ HEADERS = {
 
     "User-Agent": "Mozilla/5.0",
 
-    "Accept": "text/html,application/xml"
+    "Accept": "application/rss+xml,application/xml"
 
 }
-
-class MetaParser(HTMLParser):
-
-    def __init__(self):
-
-        super().__init__()
-
-        self.meta = {}
-
-        self.canonical = ""
-
-    def handle_starttag(self, tag, attrs):
-
-        a = dict(attrs)
-
-        if tag == "meta":
-
-            key = a.get("property") or a.get("name")
-
-            if key:
-
-                self.meta[key.lower()] = a.get("content", "")
-
-        if tag == "link":
-
-            if "canonical" in a.get("rel", "").lower():
-
-                self.canonical = a.get("href", "")
-
-def fetch(url, timeout=10):
-
-    req = urllib.request.Request(url, headers=HEADERS)
-
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-
-        return res.geturl(), res.read(500000).decode(
-
-            "utf-8", errors="replace"
-
-        )
-
-def get_article_info(url):
-
-    try:
-
-        final_url, page = fetch(url)
-
-        parser = MetaParser()
-
-        parser.feed(page)
-
-        meta = parser.meta
-
-        article_url = (
-
-            meta.get("og:url")
-
-            or parser.canonical
-
-            or final_url
-
-        )
-
-        article_url = urllib.parse.urljoin(
-
-            final_url, article_url
-
-        )
-
-        image = (
-
-            meta.get("og:image")
-
-            or meta.get("twitter:image")
-
-            or ""
-
-        )
-
-        if image:
-
-            image = urllib.parse.urljoin(final_url, image)
-
-        return article_url, image
-
-    except Exception:
-
-        return url, ""
 
 now = datetime.now(timezone.utc)
 
 articles = []
 
-_, rss_text = fetch(RSS, timeout=30)
+diagnostics = {
 
-root = ET.fromstring(rss_text)
+    "checked_at": now.isoformat(),
 
-for item in root.findall(".//item"):
+    "rss_items": 0,
 
-    title = item.findtext("title", "").strip()
+    "within_72_hours": 0,
 
-    link = item.findtext("link", "").strip()
+    "newest_article": None,
 
-    date_text = item.findtext("pubDate", "")
+    "oldest_article": None,
 
-    try:
+    "error": None
 
-        date = parsedate_to_datetime(date_text)
+}
 
-        if date.tzinfo is None:
+try:
 
-            date = date.replace(tzinfo=timezone.utc)
+    request = urllib.request.Request(
 
-    except Exception:
-
-        continue
-
-    if not title or not link:
-
-        continue
-
-    if not (
-
-        now - timedelta(hours=72) <= date <= now
-
-    ):
-
-        continue
-
-    articles.append({
-
-        "title": html.unescape(title),
-
-        "url": link,
-
-        "date": date.isoformat()
-
-    })
-
-articles = articles[:60]
-
-results = []
-
-seen = set()
-
-for article in articles:
-
-    original_url = article["url"]
-
-    resolved_url, image = get_article_info(original_url)
-
-    if not resolved_url.startswith("https://"):
-
-        resolved_url = original_url
-
-    if resolved_url in seen:
-
-        continue
-
-    seen.add(resolved_url)
-
-    is_google = (
-
-        urllib.parse.urlparse(resolved_url)
-
-        .hostname == "news.google.com"
+        RSS, headers=HEADERS
 
     )
 
-    results.append({
+    with urllib.request.urlopen(
 
-        "title": article["title"],
+        request, timeout=30
 
-        "url": resolved_url,
+    ) as response:
 
-        "date": article["date"],
+        xml_data = response.read()
 
-        "image": image,
+    root = ET.fromstring(xml_data)
 
-        "has_image": bool(image) and not is_google
+    items = root.findall(".//item")
 
-    })
+    diagnostics["rss_items"] = len(items)
 
-# 写真情報のあるニュースを優先
+    print("RSSの記事数:", len(items))
 
-# 同じ条件なら新しい記事が先
+    seen = set()
 
-results.sort(
+    all_dates = []
 
-    key=lambda x: (
+    for item in items:
 
-        x["has_image"],
+        title = item.findtext("title", "").strip()
 
-        x["date"]
+        link = item.findtext("link", "").strip()
 
-    ),
+        date_text = item.findtext("pubDate", "")
 
-    reverse=True
+        try:
 
-)
+            date = parsedate_to_datetime(date_text)
 
-Path("news.json").write_text(
+            if date.tzinfo is None:
+
+                date = date.replace(
+
+                    tzinfo=timezone.utc
+
+                )
+
+            date = date.astimezone(timezone.utc)
+
+        except Exception:
+
+            continue
+
+        all_dates.append(date)
+
+        if not title or not link:
+
+            continue
+
+        if not (
+
+            now - timedelta(hours=72)
+
+            <= date <= now
+
+        ):
+
+            continue
+
+        if link in seen:
+
+            continue
+
+        seen.add(link)
+
+        articles.append({
+
+            "title": html.unescape(title),
+
+            "url": link,
+
+            "date": date.isoformat(),
+
+            "image": "",
+
+            "has_image": False
+
+        })
+
+    if all_dates:
+
+        diagnostics["newest_article"] = (
+
+            max(all_dates).isoformat()
+
+        )
+
+        diagnostics["oldest_article"] = (
+
+            min(all_dates).isoformat()
+
+        )
+
+    articles.sort(
+
+        key=lambda x: x["date"],
+
+        reverse=True
+
+    )
+
+    diagnostics["within_72_hours"] = len(articles)
+
+    # 0件だった場合は既存データを消さない
+
+    if articles:
+
+        Path("news.json").write_text(
+
+            json.dumps(
+
+                articles,
+
+                ensure_ascii=False,
+
+                indent=2
+
+            ),
+
+            encoding="utf-8"
+
+        )
+
+    else:
+
+        print("72時間以内の記事が0件です")
+
+except Exception as e:
+
+    diagnostics["error"] = str(e)
+
+    print("取得エラー:", e)
+
+Path("diagnostics.json").write_text(
 
     json.dumps(
 
-        results,
+        diagnostics,
 
         ensure_ascii=False,
 
@@ -254,12 +222,4 @@ Path("news.json").write_text(
 
 )
 
-print("取得件数:", len(results))
-
-print(
-
-    "写真情報あり:",
-
-    sum(x["has_image"] for x in results)
-
-)
+print("診断結果:", diagnostics)
