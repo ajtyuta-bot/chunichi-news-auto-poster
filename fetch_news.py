@@ -24,7 +24,7 @@ from pathlib import Path
 
 QUERY = "中日ドラゴンズ"
 
-RSS = (
+RSS = 
 
     "https://news.google.com/rss/search?q="
 
