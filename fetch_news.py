@@ -223,3 +223,4 @@ Path("diagnostics.json").write_text(
 )
 
 print("診断結果:", diagnostics)
+が
