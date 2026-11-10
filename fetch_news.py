@@ -4,9 +4,9 @@ import json
 
 import html
 
-import urllib.request
+import re
 
-import urllib.parse
+import urllib.request
 
 import xml.etree.ElementTree as ET
 
@@ -16,63 +16,73 @@ from email.utils import parsedate_to_datetime
 
 from pathlib import Path
 
-# Googleニュースの検索条件
+from urllib.parse import urlparse
 
-# when:3d を外して幅広く取得し、
+# Yahoo!ニュースのスポーツ記事
 
-# 取得後に72時間以内の記事だけ残す
+RSS_URL = "https://news.yahoo.co.jp/rss/categories/sports.xml"
 
-QUERY = "中日ドラゴンズ"
+# 中日ドラゴンズに関する検索ワード
 
-RSS = (
+KEYWORDS = [
 
-    "https://news.google.com/rss/search?q="
+    "中日",
 
-    + urllib.parse.quote(QUERY)
+    "ドラゴンズ",
 
-    + "&hl=ja&gl=JP&ceid=JP:ja"
+    "ドラゴンズ",
 
-)
+    "バンテリンドーム",
+
+    "ナゴヤ球場",
+
+]
+
+HOURS = 72
 
 HEADERS = {
 
     "User-Agent": "Mozilla/5.0",
 
-    "Accept": "application/rss+xml,application/xml"
+    "Accept": "application/rss+xml, application/xml"
 
 }
 
 now = datetime.now(timezone.utc)
 
-articles = []
-
 diagnostics = {
 
     "checked_at": now.isoformat(),
+
+    "source": "Yahoo!ニュース",
 
     "rss_items": 0,
 
     "within_72_hours": 0,
 
-    "newest_article": None,
-
-    "oldest_article": None,
+    "matched_articles": 0,
 
     "error": None
 
 }
 
+articles = []
+
 try:
 
     request = urllib.request.Request(
 
-        RSS, headers=HEADERS
+        RSS_URL,
+
+        headers=HEADERS
 
     )
 
     with urllib.request.urlopen(
 
-        request, timeout=30
+        request,
+
+        timeout=30
 
     ) as response:
 
@@ -84,23 +94,79 @@ try:
 
     diagnostics["rss_items"] = len(items)
 
-    print("RSSの記事数:", len(items))
-
     seen = set()
-
-    all_dates = []
 
     for item in items:
 
-        title = item.findtext("title", "").strip()
+        title = html.unescape(
 
-        link = item.findtext("link", "").strip()
+            item.findtext("title", "").strip()
 
-        date_text = item.findtext("pubDate", "")
+        )
+
+        link = html.unescape(
+
+            item.findtext("link", "").strip()
+
+        )
+
+        description = html.unescape(
+
+            item.findtext("description", "")
+
+        )
+
+        date_text = item.findtext(
+
+            "pubDate", ""
+
+        )
+
+        if not title or not link:
+
+            continue
+
+        # Yahoo!ニュースの記事URLだけを使用
+
+        parsed = urlparse(link)
+
+        if parsed.hostname not in (
+
+            "news.yahoo.co.jp",
+
+            "www.news.yahoo.co.jp"
+
+        ):
+
+            continue
+
+        # 中日ドラゴンズに関連する記事を抽出
+
+        search_text = (
+
+            title + " " +
+
+            re.sub(r"<[^>]*>", " ", description)
+
+        )
+
+        if not any(
+
+            keyword in search_text
+
+            for keyword in KEYWORDS
+
+        ):
+
+            continue
 
         try:
 
-            date = parsedate_to_datetime(date_text)
+            date = parsedate_to_datetime(
+
+                date_text
+
+            )
 
             if date.tzinfo is None:
 
@@ -110,21 +176,21 @@ try:
 
                 )
 
-            date = date.astimezone(timezone.utc)
+            date = date.astimezone(
+
+                timezone.utc
+
+            )
 
         except Exception:
 
             continue
 
-        all_dates.append(date)
-
-        if not title or not link:
-
-            continue
+        # 72時間以内の記事のみ
 
         if not (
 
-            now - timedelta(hours=72)
+            now - timedelta(hours=HOURS)
 
             <= date <= now
 
@@ -140,7 +206,7 @@ try:
 
         articles.append({
 
-            "title": html.unescape(title),
+            "title": title,
 
             "url": link,
 
@@ -152,20 +218,6 @@ try:
 
         })
 
-    if all_dates:
-
-        diagnostics["newest_article"] = (
-
-            max(all_dates).isoformat()
-
-        )
-
-        diagnostics["oldest_article"] = (
-
-            min(all_dates).isoformat()
-
-        )
-
     articles.sort(
 
         key=lambda x: x["date"],
@@ -174,31 +226,41 @@ try:
 
     )
 
-    diagnostics["within_72_hours"] = len(articles)
+    diagnostics["within_72_hours"] = len(
 
-    # 0件だった場合は既存データを消さない
+        articles
 
-    if articles:
+    )
 
-        Path("news.json").write_text(
+    diagnostics["matched_articles"] = len(
 
-            json.dumps(
+        articles
 
-                articles,
+    )
 
-                ensure_ascii=False,
+    # Yahoo!の記事だけで更新する
 
-                indent=2
+    # 0件の場合は古いGoogle記事を残さない
 
-            ),
+    Path("news.json").write_text(
 
-            encoding="utf-8"
+        json.dumps(
 
-        )
+            articles,
 
-    else:
+            ensure_ascii=False,
 
-        print("72時間以内の記事が0件です")
+            indent=2
+
+        ),
+
+        encoding="utf-8"
+
+    )
+
+    print("RSS取得件数:", len(items))
+
+    print("中日関連記事:", len(articles))
 
 except Exception as e:
 
@@ -223,4 +285,3 @@ Path("diagnostics.json").write_text(
 )
 
 print("診断結果:", diagnostics)
-
