@@ -18,11 +18,15 @@ from pathlib import Path
 
 from urllib.parse import urlparse
 
-# Yahoo!ニュースのスポーツ記事
+# ===== 設定 =====
 
 RSS_URL = "https://news.yahoo.co.jp/rss/categories/sports.xml"
 
-# 中日ドラゴンズに関する検索ワード
+# 記事を保存する時間
+
+HOURS = 72
+
+# 中日ドラゴンズ関連のキーワード
 
 KEYWORDS = [
 
@@ -30,25 +34,25 @@ KEYWORDS = [
 
     "ドラゴンズ",
 
-    "ドラゴンズ",
-
     "バンテリンドーム",
 
-    "ナゴヤ球場",
+    "ナゴヤ球場"
 
 ]
-
-HOURS = 72
 
 HEADERS = {
 
     "User-Agent": "Mozilla/5.0",
 
-    "Accept": "application/rss+xml, application/xml"
+    "Accept": "application/rss+xml,application/xml"
 
 }
 
+# ===== 現在時刻 =====
+
 now = datetime.now(timezone.utc)
+
+cutoff = now - timedelta(hours=HOURS)
 
 diagnostics = {
 
@@ -58,15 +62,103 @@ diagnostics = {
 
     "rss_items": 0,
 
-    "within_72_hours": 0,
+    "new_articles": 0,
 
-    "matched_articles": 0,
+    "saved_articles": 0,
 
     "error": None
 
 }
 
+# ===== 既存記事を読み込む =====
+
 articles = []
+
+seen = set()
+
+path = Path("news.json")
+
+if path.exists():
+
+    try:
+
+        old_articles = json.loads(
+
+            path.read_text(encoding="utf-8")
+
+        )
+
+        for article in old_articles:
+
+            url = article.get("url", "")
+
+            date_text = article.get("date", "")
+
+            # Googleニュースの記事は引き継がない
+
+            parsed = urlparse(url)
+
+            if parsed.hostname != "news.yahoo.co.jp":
+
+                continue
+
+            try:
+
+                date = datetime.fromisoformat(
+
+                    date_text
+
+                )
+
+                if date.tzinfo is None:
+
+                    date = date.replace(
+
+                        tzinfo=timezone.utc
+
+                    )
+
+                date = date.astimezone(
+
+                    timezone.utc
+
+                )
+
+            except Exception:
+
+                continue
+
+            # 72時間以内の記事だけ保存
+
+            if not cutoff <= date <= now:
+
+                continue
+
+            if url in seen:
+
+                continue
+
+            seen.add(url)
+
+            articles.append({
+
+                "title": article.get("title", ""),
+
+                "url": url,
+
+                "date": date.isoformat(),
+
+                "image": "",
+
+                "has_image": False
+
+            })
+
+    except Exception as e:
+
+        print("既存記事の読み込みエラー:", e)
+
+# ===== Yahoo!ニュースから新着取得 =====
 
 try:
 
@@ -94,8 +186,6 @@ try:
 
     diagnostics["rss_items"] = len(items)
 
-    seen = set()
-
     for item in items:
 
         title = html.unescape(
@@ -104,7 +194,7 @@ try:
 
         )
 
-        link = html.unescape(
+        url = html.unescape(
 
             item.findtext("link", "").strip()
 
@@ -122,25 +212,19 @@ try:
 
         )
 
-        if not title or not link:
+        if not title or not url:
 
             continue
 
-        # Yahoo!ニュースの記事URLだけを使用
+        # Yahoo!ニュースの記事だけ取得
 
-        parsed = urlparse(link)
+        parsed = urlparse(url)
 
-        if parsed.hostname not in (
-
-            "news.yahoo.co.jp",
-
-            "www.news.yahoo.co.jp"
-
-        ):
+        if parsed.hostname != "news.yahoo.co.jp":
 
             continue
 
-        # 中日ドラゴンズに関連する記事を抽出
+        # 中日ドラゴンズ関連記事を抽出
 
         search_text = (
 
@@ -152,9 +236,9 @@ try:
 
         if not any(
 
-            keyword in search_text
+            word in search_text
 
-            for keyword in KEYWORDS
+            for word in KEYWORDS
 
         ):
 
@@ -186,29 +270,21 @@ try:
 
             continue
 
-        # 72時間以内の記事のみ
-
-        if not (
-
-            now - timedelta(hours=HOURS)
-
-            <= date <= now
-
-        ):
+        if not cutoff <= date <= now:
 
             continue
 
-        if link in seen:
+        if url in seen:
 
             continue
 
-        seen.add(link)
+        seen.add(url)
 
         articles.append({
 
             "title": title,
 
-            "url": link,
+            "url": url,
 
             "date": date.isoformat(),
 
@@ -218,55 +294,51 @@ try:
 
         })
 
-    articles.sort(
+        diagnostics["new_articles"] += 1
 
-        key=lambda x: x["date"],
+    print(
 
-        reverse=True
+        "新しく追加した記事:",
 
-    )
-
-    diagnostics["within_72_hours"] = len(
-
-        articles
+        diagnostics["new_articles"]
 
     )
-
-    diagnostics["matched_articles"] = len(
-
-        articles
-
-    )
-
-    # Yahoo!の記事だけで更新する
-
-    # 0件の場合は古いGoogle記事を残さない
-
-    Path("news.json").write_text(
-
-        json.dumps(
-
-            articles,
-
-            ensure_ascii=False,
-
-            indent=2
-
-        ),
-
-        encoding="utf-8"
-
-    )
-
-    print("RSS取得件数:", len(items))
-
-    print("中日関連記事:", len(articles))
 
 except Exception as e:
 
     diagnostics["error"] = str(e)
 
-    print("取得エラー:", e)
+    print("RSS取得エラー:", e)
+
+# ===== 新しい順に並べる =====
+
+articles.sort(
+
+    key=lambda x: x["date"],
+
+    reverse=True
+
+)
+
+diagnostics["saved_articles"] = len(articles)
+
+# ===== 記事を保存 =====
+
+Path("news.json").write_text(
+
+    json.dumps(
+
+        articles,
+
+        ensure_ascii=False,
+
+        indent=2
+
+    ),
+
+    encoding="utf-8"
+
+)
 
 Path("diagnostics.json").write_text(
 
@@ -283,5 +355,7 @@ Path("diagnostics.json").write_text(
     encoding="utf-8"
 
 )
+
+print("保存記事数:", len(articles))
 
 print("診断結果:", diagnostics)
